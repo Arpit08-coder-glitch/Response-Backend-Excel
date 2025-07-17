@@ -8,10 +8,10 @@ app.use(express.json()); // Only accept JSON
 // app.use(express.urlencoded({ extended: true })); // Remove this to only accept JSON
 
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'postgres',
-  password: 'arpit',
+  user: 'user_it',
+  host: '192.168.1.91',
+  database: 'DEV-BETA',
+  password: 'Qawsed*&^%',
   port: 5432,
 });
 
@@ -20,7 +20,7 @@ app.post('/api/contact', async (req, res) => {
   console.log('Received:', { name, email, phone, message });
   try {
     await pool.query(
-      'INSERT INTO "Test" ("Name", "Email", "Phone Number", "Message") VALUES ($1, $2, $3, $4)',
+      'INSERT INTO response."Feedback" ("Name", "Email", "Phone Number", "Message") VALUES ($1, $2, $3, $4)',
       [name, email, phone, message]
     );
     res.status(200).json({ success: true });
@@ -36,7 +36,7 @@ app.post('/api/get-in-touch', async (req, res) => {
   if (!Array.isArray(services)) services = services ? [services] : [];
   try {
     await pool.query(
-      'INSERT INTO "GetInTouch" ("Name", "Email", "Phone Number", "Services Interested In", "Message") VALUES ($1, $2, $3, $4, $5)',
+      'INSERT INTO response."GetInTouch" ("Name", "Email", "Phone Number", "Services Interested In", "Message") VALUES ($1, $2, $3, $4, $5)',
       [name, email, phone, services.join(', '), message]
     );
     res.status(200).json({ success: true });
@@ -46,5 +46,5 @@ app.post('/api/get-in-touch', async (req, res) => {
 });
 
 app.listen(5005, () => {
-  console.log('Server running on http://localhost:5005');
+  console.log('Server run on http://localhost:5005');
 }); 
