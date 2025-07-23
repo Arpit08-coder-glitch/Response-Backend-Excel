@@ -158,6 +158,25 @@ app.post('/api/award-coins', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+app.post('/api/cookie-accept', async (req, res) => {
+  const { user_id, timestamp } = req.body;
+
+  // Get client IP from headers or socket
+  const ip =
+    req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+
+  try {
+    await pool.query(
+      `INSERT INTO response."CookieConsent" (user_id, ip_address, accepted_at)
+       VALUES ($1, $2, $3)`,
+      [user_id, ip, timestamp || new Date()]
+    );
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Cookie accept error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.listen(5005, () => {
-  console.log('Server is running on http://localhost:5005');
+  console.log('Server running on http://localhost:5005');
 }); 
