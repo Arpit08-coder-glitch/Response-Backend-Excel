@@ -159,17 +159,16 @@ app.post('/api/award-coins', async (req, res) => {
   }
 });
 app.post('/api/cookie-accept', async (req, res) => {
-  const { user_id, timestamp } = req.body;
+  const { user_id, timestamp, latitude, longitude } = req.body;
 
-  // Get client IP from headers or socket
   const ip =
     req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
 
   try {
     await pool.query(
-      `INSERT INTO response."CookieConsent" (user_id, ip_address, accepted_at)
-       VALUES ($1, $2, $3)`,
-      [user_id, ip, timestamp || new Date()]
+      `INSERT INTO response."CookieConsent" (user_id, ip_address, accepted_at, latitude, longitude)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user_id, ip, timestamp || new Date(), latitude, longitude]
     );
     res.status(200).json({ success: true });
   } catch (err) {
@@ -177,6 +176,7 @@ app.post('/api/cookie-accept', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.listen(5005, () => {
-  console.log('Server running on http://localhost:5005');
+  console.log('Server is running on http://localhost:5005');
 }); 
