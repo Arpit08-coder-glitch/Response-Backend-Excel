@@ -1,182 +1,169 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+const xlsx = require('xlsx');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-const pool = new Pool({
-  user: 'user_it',
-  host: '45.251.14.68',
-  database: 'DEV-BETA',
-  password: 'Qawsed*&^%',
-  port: 5432,
-});
 
-app.post('/api/contact', async (req, res) => {
+const dataDir = path.join(__dirname, 'excel_data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+
+function loadSheet(file, sheetName) {
+  const filePath = path.join(dataDir, file);
+  if (!fs.existsSync(filePath)) return [];
+
+  const wb = xlsx.readFile(filePath);
+  const ws = wb.Sheets[sheetName || wb.SheetNames[0]];
+  return xlsx.utils.sheet_to_json(ws);
+}
+
+function saveSheet(file, data, sheetName = 'Sheet1') {
+  const ws = xlsx.utils.json_to_sheet(data);
+  const wb = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(wb, ws, sheetName);
+  xlsx.writeFile(wb, path.join(dataDir, file));
+}
+
+app.post('/api/contact', (req, res) => {
   const { name, email, phone, message } = req.body;
-  console.log('Received:', { name, email, phone, message });
-  try {
-    // Check if email is in spam
-    const spamCheck = await pool.query('SELECT 1 FROM response."Spam" WHERE "Email" = $1', [email]);
-    if (spamCheck.rowCount > 0) {
-      return res.status(200).json({ success: true });
-    }
-    await pool.query(
-      'INSERT INTO response."Feedback" ("Name", "Email", "Phone Number", "Message") VALUES ($1, $2, $3, $4)',
-      [name, email, phone, message]
-    );
-    res.status(200).json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  const spamList = loadSheet('Spam.xlsx');
+  if (spamList.some(e => e.Email === email)) return res.json({ success: true });
+
+  const feedbacks = loadSheet('Feedback.xlsx');
+  feedbacks.push({ Name: name, Email: email, 'Phone Number': phone, Message: message });
+  saveSheet('Feedback.xlsx', feedbacks);
+  res.json({ success: true });
 });
 
-app.post('/api/get-in-touch', async (req, res) => {
+app.post('/api/get-in-touch', (req, res) => {
   let { name, email, phone, services, message } = req.body;
-  console.log('Received:', { name, email, phone, services, message });
-  // Ensure all are arrays for Postgres array columns
-  if (!Array.isArray(services)) services = services ? [services] : [];
-  try {
-    // Check if email is in spam
-    const spamCheck = await pool.query('SELECT 1 FROM response."Spam" WHERE "Email" = $1', [email]);
-    if (spamCheck.rowCount > 0) {
-      return res.status(200).json({ success: true });
-    }
-    await pool.query(
-      'INSERT INTO response."GetInTouch" ("Name", "Email", "Phone Number", "Services Interested In", "Message") VALUES ($1, $2, $3, $4, $5)',
-      [name, email, phone, services.join(', '), message]
-    );
-    res.status(200).json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  services = Array.isArray(services) ? services.join(', ') : services;
+
+  const spamList = loadSheet('Spam.xlsx');
+  if (spamList.some(e => e.Email === email)) return res.json({ success: true });
+
+  const entries = loadSheet('GetInTouch.xlsx');
+  entries.push({
+    Name: name,
+    Email: email,
+    'Phone Number': phone,
+    'Services Interested In': services,
+    Message: message
+  });
+  saveSheet('GetInTouch.xlsx', entries);
+  res.json({ success: true });
 });
-app.post('/api/faq-question', async (req, res) => {
+
+app.post('/api/faq-question', (req, res) => {
   const { question } = req.body;
-  if (!question) {
-    return res.status(400).json({ success: false, error: 'Question is required' });
-  }
-  try {
-    await pool.query(
-      'INSERT INTO response."FAQQuestions" (question) VALUES ($1)',
-      [question]
-    );
-    res.status(200).json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  if (!question) return res.status(400).json({ success: false, error: 'Question is required' });
+
+  const questions = loadSheet('FAQQuestions.xlsx');
+  questions.push({ question });
+  saveSheet('FAQQuestions.xlsx', questions);
+  res.json({ success: true });
 });
-app.post('/api/track-visit', async (req, res) => {
+
+app.post('/api/track-visit', (req, res) => {
+  console.log('Received full request body:', JSON.stringify(req.body, null, 2));
   const { user_id, page } = req.body;
-  if (!user_id) return res.status(400).json({ success: false, error: 'user_id required' });
-  if (!page || typeof page !== 'string' || page.trim() === '') {
-    return res.status(400).json({ success: false, error: 'page required' });
+  if (!user_id || !page) return res.status(400).json({ success: false, error: 'Invalid input' });
+
+  const coinsData = loadSheet('QuantaCoins.xlsx');
+  const history = loadSheet('QuantaCoinHistory.xlsx');
+
+  let user = coinsData.find(r => r.user_id === user_id);
+  if (user) {
+    user.total_visits++;
+    user.coins++;
+    user.last_visit = new Date().toISOString();
+  } else {
+    user = { user_id, total_visits: 1, coins: 1, last_visit: new Date().toISOString() };
+    coinsData.push(user);
   }
-  try {
-    // Upsert user record
-    const result = await pool.query(
-      `INSERT INTO response."QuantaCoins" (user_id, total_visits, coins, last_visit)
-       VALUES ($1, 1, 1, NOW())
-       ON CONFLICT (user_id)
-       DO UPDATE SET
-         total_visits = response."QuantaCoins".total_visits + 1,
-         coins = response."QuantaCoins".coins + 1,
-         last_visit = NOW()
-       RETURNING total_visits, coins;`,
-      [user_id]
-    );
-    // Insert into history
-    await pool.query(
-      `INSERT INTO response."QuantaCoinHistory" (user_id, source, page)
-       VALUES ($1, 'page_visit', $2)`,
-      [user_id, page]
-    );
-    res.json({ success: true, ...result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  history.push({ user_id, source: 'page_visit', page });
+
+  saveSheet('QuantaCoins.xlsx', coinsData);
+  saveSheet('QuantaCoinHistory.xlsx', history);
+
+  res.json({ success: true, total_visits: user.total_visits, coins: user.coins });
 });
-app.get('/api/coin-balance/:user_id', async (req, res) => {
+
+app.get('/api/coin-balance/:user_id', (req, res) => {
   const { user_id } = req.params;
-  try {
-    const result = await pool.query(
-      'SELECT total_visits, coins FROM response."QuantaCoins" WHERE user_id = $1',
-      [user_id]
-    );
-    const breakdownResult = await pool.query(
-      `SELECT
-         COUNT(*) FILTER (WHERE source = 'page_visit') AS page_visits,
-         COUNT(*) FILTER (WHERE source = 'form_submission') AS form_submissions,
-         COUNT(*) FILTER (WHERE source = 'faq_question') AS faq_questions,
-         COUNT(*) FILTER (WHERE source = 'faq_bonus') AS faq_bonus
-       FROM response."QuantaCoinHistory"
-       WHERE user_id = $1`,
-      [user_id]
-    );
-    if (result.rows.length === 0) {
-      return res.json({
-        total_visits: 0,
-        coins: 0,
-        breakdown: {
-          page_visits: 0,
-          form_submissions: 0,
-          faq_questions: 0,
-          faq_bonus: 0
-        }
-      });
-    }
-    res.json({
-      ...result.rows[0],
-      breakdown: breakdownResult.rows[0]
+  const coinsData = loadSheet('QuantaCoins.xlsx');
+  const history = loadSheet('QuantaCoinHistory.xlsx').filter(r => r.user_id === user_id);
+
+  const user = coinsData.find(r => r.user_id === user_id);
+  if (!user) {
+    return res.json({
+      total_visits: 0,
+      coins: 0,
+      breakdown: {
+        page_visits: 0,
+        form_submissions: 0,
+        faq_questions: 0,
+        faq_bonus: 0
+      }
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
   }
+
+  const breakdown = {
+    page_visits: history.filter(r => r.source === 'page_visit').length,
+    form_submissions: history.filter(r => r.source === 'form_submission').length,
+    faq_questions: history.filter(r => r.source === 'faq_question').length,
+    faq_bonus: history.filter(r => r.source === 'faq_bonus').length,
+  };
+
+  res.json({ total_visits: user.total_visits, coins: user.coins, breakdown });
 });
-app.post('/api/award-coins', async (req, res) => {
+
+app.post('/api/award-coins', (req, res) => {
   const { user_id, coins, source } = req.body;
   if (!user_id || !coins) return res.status(400).json({ success: false, error: 'user_id and coins required' });
-  try {
-    await pool.query(
-      `INSERT INTO response."QuantaCoins" (user_id, total_visits, coins, last_visit)
-       VALUES ($1, 0, $2, NOW())
-       ON CONFLICT (user_id)
-       DO UPDATE SET coins = response."QuantaCoins".coins + $2, last_visit = NOW()`,
-      [user_id, coins]
-    );
-    // Insert into history (one row per coin)
-    for (let i = 0; i < coins; i++) {
-      await pool.query(
-        `INSERT INTO response."QuantaCoinHistory" (user_id, source)
-         VALUES ($1, $2)`,
-        [user_id, source || 'form_submission']
-      );
-    }
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+
+  const coinsData = loadSheet('QuantaCoins.xlsx');
+  const history = loadSheet('QuantaCoinHistory.xlsx');
+  const now = new Date().toISOString();
+
+  let user = coinsData.find(r => r.user_id === user_id);
+  if (user) {
+    user.coins += coins;
+    user.last_visit = now;
+  } else {
+    user = { user_id, total_visits: 0, coins, last_visit: now };
+    coinsData.push(user);
   }
+
+  for (let i = 0; i < coins; i++) {
+    history.push({ user_id, source: source || 'form_submission' });
+  }
+
+  saveSheet('QuantaCoins.xlsx', coinsData);
+  saveSheet('QuantaCoinHistory.xlsx', history);
+  res.json({ success: true });
 });
-app.post('/api/cookie-accept', async (req, res) => {
+
+app.post('/api/cookie-accept', (req, res) => {
   const { user_id, timestamp, latitude, longitude } = req.body;
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+  const data = loadSheet('CookieConsent.xlsx');
 
-  const ip =
-    req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+  data.push({
+    user_id,
+    ip_address: ip,
+    accepted_at: timestamp || new Date().toISOString(),
+    latitude,
+    longitude
+  });
 
-  try {
-    await pool.query(
-      `INSERT INTO response."CookieConsent" (user_id, ip_address, accepted_at, latitude, longitude)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user_id, ip, timestamp || new Date(), latitude, longitude]
-    );
-    res.status(200).json({ success: true });
-  } catch (err) {
-    console.error('Cookie accept error:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
+  saveSheet('CookieConsent.xlsx', data);
+  res.json({ success: true });
 });
 
 app.listen(5005, () => {
-  console.log('Server is running on http://localhost:5005');
-}); 
+  console.log('Server is running at http://localhost:5005');
+});
